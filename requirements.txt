@@ -1,0 +1,12 @@
+torch==2.5.1
+torch-geometric==2.7.0
+torchvision==0.20.1
+torchaudio==2.5.1
+sentence-transformers==5.2.3
+transformers==5.2.0
+scikit-learn==1.7.2
+matplotlib==3.10.8
+numpy==2.0.1
+psycopg2-binary==2.9.11
+pytz==2025.2
+tqdm==4.67.3
