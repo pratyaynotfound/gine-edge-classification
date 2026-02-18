@@ -54,9 +54,9 @@ Input: node features x [N, 387],  edge_index [2, E],  edge_relation [E, 7]
 ### 1. Edge Balancing
 Real attack days have severely imbalanced edges (~1–5% malicious). We subsample benign edges at a configurable ratio:
 
-$$\text{benign\_sample} = \min\left(|\text{malicious}| \times r,\ |\text{benign}|\right)$$
+$$\text{benign\_sample} = \min\left(\lvert\text{malicious}\rvert \times r,\ \lvert\text{benign}\rvert\right)$$
 
-Default `benign_ratio = 3` (1 malicious : 3 benign).
+Default `benign ratio = 3` (1 malicious : 3 benign).
 
 ### 2. Loss
 `CrossEntropyLoss` over per-edge logits.
