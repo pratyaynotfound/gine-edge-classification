@@ -56,7 +56,7 @@ Real attack days have severely imbalanced edges (~1–5% malicious). We subsampl
 
 $$\text{benign\_sample} = \min\left(|\text{malicious}| \times r,\ |\text{benign}|\right)$$
 
-Default `benign_ratio = 3` (1 malicious : 3 benign).
+Default `benign ratio = 3` (1 malicious : 3 benign).
 
 ### 2. Loss
 `CrossEntropyLoss` over per-edge logits.
