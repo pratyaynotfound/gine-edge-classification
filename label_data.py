@@ -1,4 +1,4 @@
-#   CADETS E3 ground truth mapping  –  temporally-aware version
+#   CADETS E3 ground truth mapping
 #
 #   Ground truth extracted from:
 #     TC_Ground_Truth_Report_E3_Update.pdf  (Kudu Dynamics / DARPA TC)
@@ -22,12 +22,6 @@
 
 from typing import Set, Dict, Any, Optional
 
-# ────────────────────────────────────────────────────────────────────
-#  Per-day malicious IOCs (Indicators of Compromise) for CADETS
-#  Only the items that actually appear on each attack day are listed.
-# ────────────────────────────────────────────────────────────────────
-
-# -- Malicious IP addresses per attack day --
 MALICIOUS_IPS_BY_DAY: Dict[int, Set[str]] = {
     6: {
         # §3.1 Nation State attack
@@ -72,8 +66,6 @@ MALICIOUS_IPS_BY_DAY: Dict[int, Set[str]] = {
     },
 }
 
-# -- Malicious file paths per attack day --
-# Use EXACT paths only (no bare substrings that cause false positives)
 MALICIOUS_FILES_BY_DAY: Dict[int, Set[str]] = {
     6: {
         # §3.1
@@ -105,7 +97,6 @@ MALICIOUS_FILES_BY_DAY: Dict[int, Set[str]] = {
     },
 }
 
-# -- Malicious process name patterns per attack day --
 MALICIOUS_PROCESSES_BY_DAY: Dict[int, Set[str]] = {
     6: {
         "vUgefal",      # elevated drakon process
@@ -119,9 +110,6 @@ MALICIOUS_PROCESSES_BY_DAY: Dict[int, Set[str]] = {
     },
 }
 
-# ────────────────────────────────────────────────────────────────────
-#  Aggregate sets  (flat, for quick "is this ever malicious?" checks)
-# ────────────────────────────────────────────────────────────────────
 ALL_MALICIOUS_IPS: Set[str] = set()
 for _ips in MALICIOUS_IPS_BY_DAY.values():
     ALL_MALICIOUS_IPS |= _ips
@@ -144,16 +132,11 @@ WRITE_RELATIONS = {"EVENT_WRITE", "EVENT_RENAME", "EVENT_TRUNCATE",
 NETWORK_RELATIONS = {"EVENT_SENDTO", "EVENT_CONNECT", "EVENT_SENDMSG"}
 READ_RELATIONS  = {"EVENT_READ", "EVENT_RECVFROM", "EVENT_RECVMSG"}
 
-# System / benign processes that should never be tainted by propagation
 SYSTEM_PROCESSES = {
     "systemd", "sshd", "init", "kernel", "kthreadd", "kworker",
     "ksoftirqd", "migration", "rcu", "watchdog",
 }
 
-
-# ────────────────────────────────────────────────────────────────────
-#  Matching helpers  – exact-path matching only, no bare substring
-# ────────────────────────────────────────────────────────────────────
 
 def _match_ip(properties: str, ip_set: Set[str]) -> bool:
     """Check if *properties* contains any IP from *ip_set*."""
@@ -197,11 +180,6 @@ def _match_process(properties: str, proc_set: Set[str]) -> bool:
             return True
     return False
 
-
-# ────────────────────────────────────────────────────────────────────
-#  Core temporally-aware detection
-# ────────────────────────────────────────────────────────────────────
-
 def detect_anchor(node_type: str, properties: str,
                   day: Optional[int] = None) -> tuple:
     """Return (is_anchor, reason) for a node, scoped to *day*.
@@ -235,11 +213,6 @@ def is_system_process(properties: str) -> bool:
     pl = properties.lower()
     return any(sp in pl for sp in SYSTEM_PROCESSES)
 
-
-# ────────────────────────────────────────────────────────────────────
-#  Taint tracker (per-day scope)
-# ────────────────────────────────────────────────────────────────────
-
 class TaintTracker:
     """Track malicious (tainted) nodes.
 
@@ -251,13 +224,11 @@ class TaintTracker:
         self.malicious_nodes: Set[str] = set()
         self.anchor_reasons: Dict[str, str] = {}
 
-    # --- query ---
     def is_mal(self, h: str) -> bool:
         return h in self.malicious_nodes
 
     is_malicious = is_mal          # alias
 
-    # --- mutate ---
     def mark_mal(self, h: str, reason: str):
         if h not in self.malicious_nodes:
             self.malicious_nodes.add(h)
@@ -265,17 +236,11 @@ class TaintTracker:
 
     mark_malicious = mark_mal      # alias
 
-    # --- stats ---
     def get_stats(self) -> Dict[str, Any]:
         return {
             "Total Malicious Nodes": len(self.malicious_nodes),
             "Anchor Reasons": dict(self.anchor_reasons),
         }
-
-
-# ────────────────────────────────────────────────────────────────────
-#  Propagation rules
-# ────────────────────────────────────────────────────────────────────
 
 def should_propagate_taint(
     src_type: str, dst_type: str, relation_type: str,
@@ -284,18 +249,15 @@ def should_propagate_taint(
 ) -> tuple:
     """Decide whether taint should flow from src to dst (or vice versa)."""
 
-    # Malicious process executes another process
     if src_malicious and src_type == "subject" and dst_type == "subject":
         if relation_type in EXEC_RELATIONS:
             if not is_system_process(dst_properties):
                 return True, "exec_from_malicious_process"
 
-    # Malicious process writes to file
     if src_malicious and src_type == "subject" and dst_type == "file":
         if relation_type in WRITE_RELATIONS:
             return True, "write_from_malicious_process"
 
-    # Execute malicious file -> taint the resulting process
     if src_malicious and src_type == "subject" and dst_type == "file":
         if relation_type in EXEC_RELATIONS:
             return True, "exec_malicious_file"
@@ -303,17 +265,11 @@ def should_propagate_taint(
         if relation_type in EXEC_RELATIONS:
             return True, "exec_malicious_file"
 
-    # Malicious process opens a network connection
     if src_malicious and src_type == "subject" and dst_type == "netflow":
         if relation_type in NETWORK_RELATIONS:
             return True, "network_from_malicious_process"
 
     return False, ""
-
-
-# ────────────────────────────────────────────────────────────────────
-#  Per-edge labelling (called for every edge in the day)
-# ────────────────────────────────────────────────────────────────────
 
 def compute_edge_label(
     src_hash: str, src_type: str, src_properties: str,

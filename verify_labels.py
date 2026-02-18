@@ -111,10 +111,10 @@ def verify():
         # ── TEMPORAL CHECK: benign days must have 0 malicious ──
         if day not in ATTACK_DAYS:
             if n_mal_saved != 0:
-                logger.error(f"  ✗ BENIGN day {day} has {n_mal_saved} malicious edges!")
+                logger.error(f" BENIGN day {day} has {n_mal_saved} malicious edges!")
                 all_ok = False
             else:
-                logger.info(f"  ✓ BENIGN day {day} has 0 malicious edges (correct)")
+                logger.info(f" BENIGN day {day} has 0 malicious edges (correct)")
 
         # ── anchor traceability on attack days ──
         if day in ATTACK_DAYS and n_mal_saved > 0:
