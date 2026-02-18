@@ -89,14 +89,6 @@ After training, for each test day the following are saved to `artifact/plots/`:
 | ROC Curve | FPR vs TPR with AUC |
 | Confusion Matrix | TP / FP / FN / TN with class labels |
 
-### Day 11 — Attack Day (Nginx → Drakon, sshd inject)
-
-![Day 11 Analysis](docs/analysis_day11.png)
-
-### Day 12 — Attack Day (Nginx → Drakon, Micro APT port scans)
-
-![Day 12 Analysis](docs/analysis_day12.png)
-
 Console output per test day:
 ```
 Day 11 → AUC: 0.9996, F1: 0.9989, best threshold: 1.000
