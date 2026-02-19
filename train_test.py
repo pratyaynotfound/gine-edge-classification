@@ -4,14 +4,15 @@ import torch.nn.functional as F
 from torch_geometric.loader import DataLoader
 from sklearn.metrics import (
     roc_auc_score, f1_score, confusion_matrix, ConfusionMatrixDisplay,
-    precision_recall_curve, roc_curve, average_precision_score
+    precision_recall_curve, roc_curve, average_precision_score,
+    classification_report
 )
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import numpy as np
 from config import *
-
+from logger import logger
 
 from model import GINEEdgeModel
 
@@ -35,11 +36,11 @@ class EarlyStopping:
         else:
             self.counter += 1
 
-        return self.counter >= self.patience  # True = stop
+        return self.counter >= self.patience
 
     def load_best(self, model):
         model.load_state_dict(torch.load(self.model_path, weights_only=True))
-        print(f"Loaded best model from epoch {self.best_epoch} (val_loss={self.best_loss:.4f})")
+        logger.info(f"Loaded best model from epoch {self.best_epoch} (val_loss={self.best_loss:.4f})")
         return model
 
 def balance_edges(data, benign_ratio=benign_ratio):
@@ -83,7 +84,6 @@ def evaluate(model, data, device):
 
     auc = roc_auc_score(labels, probs)
 
-    # Find best threshold by max F1 on PR curve
     precision, recall, thresholds = precision_recall_curve(labels, probs)
     f1_scores = 2 * precision * recall / (precision + recall + 1e-8)
     best_idx = f1_scores.argmax()
@@ -95,9 +95,30 @@ def evaluate(model, data, device):
     return auc, best_f1, best_threshold, preds, probs, labels
 
 
-def plot_day_analysis(d, labels, probs, preds, auc, f1, threshold, plots_dir):
-    """Save PR curve, ROC curve, and confusion matrix for a test day."""
+def evaluate_aggregate(model, graphs, device):
+    model.eval()
+    all_probs = []
+    all_labels = []
+    with torch.no_grad():
+        for g in graphs:
+            data = g.to(device)
+            out = model(data.x, data.edge_index, data.edge_relation)
+            probs = torch.softmax(out, dim=1)[:, 1].cpu().numpy()
+            all_probs.append(probs)
+            all_labels.append(data.edge_y.cpu().numpy())
+    all_probs = np.concatenate(all_probs)
+    all_labels = np.concatenate(all_labels)
+    auc = roc_auc_score(all_labels, all_probs)
+    precision, recall, thresholds = precision_recall_curve(all_labels, all_probs)
+    f1_scores = 2 * precision * recall / (precision + recall + 1e-8)
+    best_idx = f1_scores.argmax()
+    best_threshold = thresholds[best_idx] if best_idx < len(thresholds) else 0.5
+    best_f1 = f1_scores[best_idx]
+    preds = (all_probs >= best_threshold).astype(int)
+    return auc, best_f1, best_threshold, preds, all_probs, all_labels
 
+
+def plot_day_analysis(d, labels, probs, preds, auc, f1, threshold, plots_dir):
     ap = average_precision_score(labels, probs)
     precision, recall, pr_thresh = precision_recall_curve(labels, probs)
     fpr, tpr, roc_thresh = roc_curve(labels, probs)
@@ -107,7 +128,6 @@ def plot_day_analysis(d, labels, probs, preds, auc, f1, threshold, plots_dir):
     fig, axes = plt.subplots(1, 3, figsize=(15, 4))
     fig.suptitle(f"Day {d}  |  AUC={auc:.4f}  AP={ap:.4f}  F1={f1:.4f}  threshold={threshold:.3f}", fontsize=11)
 
-    #   PR curve
     ax = axes[0]
     ax.plot(recall, precision, color='steelblue', lw=2)
     ax.axvline(recall[np.argmax(2*precision*recall/(precision+recall+1e-8))],
@@ -118,7 +138,6 @@ def plot_day_analysis(d, labels, probs, preds, auc, f1, threshold, plots_dir):
     ax.legend()
     ax.grid(True, alpha=0.3)
 
-    #   ROC curve
     ax = axes[1]
     ax.plot(fpr, tpr, color='darkorange', lw=2, label=f'AUC={auc:.4f}')
     ax.plot([0,1],[0,1], 'k--', lw=1)
@@ -128,7 +147,6 @@ def plot_day_analysis(d, labels, probs, preds, auc, f1, threshold, plots_dir):
     ax.legend()
     ax.grid(True, alpha=0.3)
 
-    #   Confusion matrix
     ax = axes[2]
     ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=["Benign","Malicious"]).plot(
         ax=ax, colorbar=False, cmap='Blues'
@@ -145,8 +163,6 @@ def plot_day_analysis(d, labels, probs, preds, auc, f1, threshold, plots_dir):
 if __name__ == "__main__":
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-
-    graphs_dir = "./graphs"
 
     train_graph = [
         torch.load(f"./artifact/graphs/graph_day{d}.pt", weights_only=False)
@@ -165,7 +181,6 @@ if __name__ == "__main__":
 
     train_graph = [balance_edges(g) for g in train_graph]
 
-    # Use the first test graph (unbalanced) as validation signal
     val_graph = balance_edges(test_graphs[0]).to(device)
 
     model = GINEEdgeModel(node_in_dim=387).to(device)
@@ -175,6 +190,7 @@ if __name__ == "__main__":
 
     os.makedirs("./artifact", exist_ok=True)
 
+    logger.info(f"Starting training | epochs={epochs} | train_days={train_days} | test_days={test_days} | device={device}")
     for epoch in range(epochs):
 
         model.train()
@@ -198,22 +214,32 @@ if __name__ == "__main__":
 
         avg_train_loss = total_loss / len(train_graph)
 
-        # Validation loss
         model.eval()
         with torch.no_grad():
             val_out = model(val_graph.x, val_graph.edge_index, val_graph.edge_relation)
             val_loss = criterion(val_out, val_graph.edge_y).item()
 
-        print(f"Epoch {epoch:3d}  train_loss={avg_train_loss:.4f}  val_loss={val_loss:.4f}"
-              f"  (patience {early_stopping.counter}/{early_stopping.patience})")
+        train_auc, train_f1, _, _, _, _ = evaluate_aggregate(model, train_graph, device)
+        val_auc, val_f1, _, _, _, _ = evaluate(model, val_graph, device)
+
+        logger.info(
+            f"Epoch {epoch:3d} | train_loss={avg_train_loss:.4f}  val_loss={val_loss:.4f} | "
+            f"train_auc={train_auc:.4f}  train_f1={train_f1:.4f} | "
+            f"val_auc={val_auc:.4f}  val_f1={val_f1:.4f} | "
+            f"patience={early_stopping.counter}/{early_stopping.patience}"
+        )
 
         if early_stopping.step(val_loss, model, epoch):
-            print(f"Early stopping triggered at epoch {epoch}")
+            logger.info(f"Early stopping triggered at epoch {epoch}")
             break
 
     model = early_stopping.load_best(model)
 
     os.makedirs("./artifact/plots", exist_ok=True)
+
+    logger.info("Starting evaluation on test days")
+    all_test_labels = []
+    all_test_preds = []
 
     for d, test_graph in zip(test_days, test_graphs):
 
@@ -223,13 +249,26 @@ if __name__ == "__main__":
         cm = confusion_matrix(labels, preds)
         tn, fp, fn, tp = cm.ravel()
 
-        print(f"Day {d} → AUC: {auc:.4f}, F1: {f1:.4f}, best threshold: {threshold:.3f}")
-        print(f"Day {d} → TP={tp}  FP={fp}  FN={fn}  TN={tn}")
+        logger.info("=" * 60)
+        logger.info(f"Test Day {d} | AUC={auc:.4f}  F1={f1:.4f}  threshold={threshold:.3f}")
+        logger.info(f"TP={tp}  FP={fp}  FN={fn}  TN={tn}")
+        report = classification_report(labels, preds, target_names=["Benign", "Malicious"], digits=4)
+        logger.info(f"Classification Report — Day {d}:\n{report}")
+
+        all_test_labels.append(labels)
+        all_test_preds.append(preds)
 
         save_path, _ = plot_day_analysis(
             d, labels, probs, preds, auc, f1, threshold,
             plots_dir="./artifact/plots"
         )
-        print(f"Saved analysis plot to {save_path}")
+        logger.info(f"Saved analysis plot to {save_path}")
+
+    combined_labels = np.concatenate(all_test_labels)
+    combined_preds = np.concatenate(all_test_preds)
+    logger.info("=" * 60)
+    logger.info("Overall Classification Report (All Test Days Combined):")
+    overall_report = classification_report(combined_labels, combined_preds, target_names=["Benign", "Malicious"], digits=4)
+    logger.info(f"\n{overall_report}")
 
 
