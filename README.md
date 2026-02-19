@@ -1,4 +1,4 @@
-# TGAD — Temporal Graph Anomaly Detection
+# Graph Anomaly Detection
 
 Edge-level anomaly detection on provenance graphs built from the **DARPA TC CADETS E3** dataset. The system encodes system-call audit logs into heterogeneous temporal graphs and trains a **GINE-based** edge classifier to detect malicious activity at syscall granularity.
 
